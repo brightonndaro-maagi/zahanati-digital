@@ -1,0 +1,81 @@
+# Production-style stack: PostgreSQL + Redis (shared rate limits) + API + scheduled jobs (+ optional HTTPS proxy).
+#   cp .env.example .env   # fill in the secrets first (see docs/DEPLOYMENT.md)
+#   docker compose up -d --build
+#   docker compose --profile tls up -d     # also start Caddy for automatic HTTPS (set DOMAIN in .env)
+x-api-env: &api-env
+  env_file: .env
+  environment:
+    FLASK_ENV: production
+    DATABASE_URL: postgresql+psycopg2://zahanati:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/zahanati
+    RATELIMIT_STORAGE_URI: redis://redis:6379/0
+    UPLOAD_DIR: /data/prescriptions
+    PROXY_HOPS: "1"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zahanati
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: zahanati
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zahanati -d zahanati"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 12
+
+  api:
+    build: .
+    restart: unless-stopped
+    <<: *api-env
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - uploads:/data
+    command: sh -c "flask db upgrade && gunicorn -b 0.0.0.0:5000 -w 3 --timeout 60 --access-logfile - run:app"
+
+  jobs:
+    build: .
+    restart: unless-stopped
+    <<: *api-env
+    depends_on:
+      api: {condition: service_started}
+    volumes:
+      - uploads:/data
+    healthcheck:
+      disable: true
+    # Every 5 minutes: expire unpaid orders, fail stuck payments, delete old prescription files and inactive HEDHI data.
+    command: sh -c "while true; do flask expire-orders; flask expire-payments; flask purge-prescriptions; flask purge-inactive-hedhi; sleep 300; done"
+
+  proxy:
+    image: caddy:2
+    profiles: ["tls"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:

@@ -1,0 +1,17 @@
+Flask>=3.0
+Flask-SQLAlchemy>=3.1
+Flask-Migrate>=4.0
+Flask-JWT-Extended>=4.6
+Flask-Cors>=4.0
+Flask-Limiter>=3.5
+marshmallow>=3.21
+psycopg2-binary>=2.9
+python-dotenv>=1.0
+reportlab>=4.0
+flasgger>=0.9.7
+gunicorn>=22.0
+pytest>=8.0
+tzdata>=2024.1
+requests>=2.31
+cryptography>=42.0
+redis>=5.0
